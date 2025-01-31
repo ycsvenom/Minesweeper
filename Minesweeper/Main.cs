@@ -1,293 +1,313 @@
-﻿using System;
-using Minesweeper.Properties;
-using System.Collections.Generic;
+﻿using Minesweeper.Properties;
+using System;
 using System.Drawing;
-using System.Windows.Forms;
 using System.Media;
-
-namespace Minesweeper {
-	public partial class Main : Form {
-		public Main() {
-			InitializeComponent();
-		}
-
-		public enum Bool {
-			True,
-			Qubit,
-			False
-		}
-
-		public int M = 7;
-		public int N = 7;
-		public int Flags = 0;
-		public int DS = 40; //DefaultSize
-		public char[,] map;
-		public int Sp = 2; //Space
-		public int MinMines = 8;
-		public Image[] Numbers = new Image[10];
-		public List<List<PictureBox>> S = new List<List<PictureBox>>();
-		public Bool WinState;
-		SoundPlayer[] SoundEffects = new SoundPlayer[2];
-
-		private Point CalcCenter() {
-			int x = (Size.Width - (N * DS + (Sp * (N - 1)))) / 2;
-			int y = (Size.Height - (M * DS + (Sp * (N - 1)))) / 2;
-			return new Point(x, y);
-		}
-
-		private void Shuffle() {
-			Random RN = new Random();
-			int r, c;
-			for (int i = 0; i < MinMines;) {
-				r = RN.Next(0, M);
-				c = RN.Next(0, N);
-				if (map[r, c] != 'B') {
-					map[r, c] = 'B';
-					i++;
-				}
-			}
-		}
-
-		//Srnd=Surroundings
-		private int CalcSrndBombs(int R, int C) {
-			int Bombs = 0;
-			for (int i = R - 1; i <= R + 1; i++)
-				if (i >= 0 && i < M)
-					for (int j = C - 1; j <= C + 1; j++)
-						if (j >= 0 && j < N)
-							if (map[i, j] == 'B')
-								Bombs++;
-			return Bombs;
-		}
-
-		private int CalcSrndFlags(int R, int C) {
-			int Flagged = 0;
-			for (int i = R - 1; i <= R + 1; i++)
-				if (i >= 0 && i < M)
-					for (int j = C - 1; j <= C + 1; j++)
-						if (j >= 0 && j < N)
-							if (!(i == R && j == C))
-								if (GetInfo(S[i][j]).Flagged)
-									Flagged++;
-			return Flagged;
-		}
+using System.Windows.Forms;
 
 
-		// boolean function returns true when the player loses
-		private bool RSBContinue(int R, int C) {
-			if (!GetInfo(S[R][C]).Flagged) {
-				switch (map[R, C]) {
-					case '0':
-						RevealConnectedBlocks(R, C);
-						break;
-					case 'B':
-						HasLost(S[R][C]);
-						return true;
-					default:
-						S[R][C].Image = Numbers[int.Parse(map[R, C] + "")];
-						GetInfo(S[R][C]).Opened = true;
-						break;
-				}
-			}
-			return false;
-		}
+/*
+	1- Change Sound
+	2- Add Settings Menu								Done
+	3- Add Additional rows, columns and mines			Done
+	4- Control Window Sizing							Done
+	5- Enhance GUI										Done
+	6- Fuck The loser (Message box "Fuck you loser")	Done
+	7- if wins (you're gonna lose next time Butthead)	Done
+	8- Add dark theme
+	9- Add Hint (next Bomb revealed)
+	10- add help
+*/
 
-		private void RevealSrndBlocks(int R, int C) {   //RSB
-			if (GetInfo(S[R][C]).Opened) {
-				if (int.Parse(map[R, C] + "") == CalcSrndFlags(R, C)) {
-					for (int i = R - 1; i <= R + 1; i++)
-						if (i >= 0 && i < M)
-							for (int j = C - 1; j <= C + 1; j++)
-								if (j >= 0 && j < N)
-									if (RSBContinue(i, j))
-										return;
-				}
-			}
-		}
+namespace Minesweeper
+{
+    public partial class Main : Form
+    {
+        public static PictureBox pbRestart;
+        public static Image[] LosingImages;
+        public static Bool WinState = Bool.Qubit;
+        readonly SoundPlayer BombSoundEffect = new SoundPlayer(Resources.BombEffect);
+        readonly SoundPlayer WinSoundEffect = new SoundPlayer(Resources.Win);
+        Mode mode = Modes.Easy;
+        Game game;
 
-		private void Analyzing() {
-			for (int i = 0; i < map.GetLength(0); i++) {
-				for (int j = 0; j < map.GetLength(1); j++) {
-					if (map[i, j] != 'B')
-						map[i, j] = (CalcSrndBombs(i, j) + "")[0];
-				}
-			}
-		}
+        public Main()
+        {
+            InitializeComponent();
 
-		private void Main_Load(object sender, EventArgs e) {
-			Numbers[0] = Resources._0;
-			Numbers[1] = Resources._1;
-			Numbers[2] = Resources._2;
-			Numbers[3] = Resources._3;
-			Numbers[4] = Resources._4;
-			Numbers[5] = Resources._5;
-			Numbers[6] = Resources._6;
-			Numbers[7] = Resources._7;
-			Numbers[8] = Resources._8;
-			SoundEffects[0] = new SoundPlayer(Resources.BombEffect);
-			SoundEffects[1] = new SoundPlayer(Resources.Win);
-			InitBoard();
-			InitGame();
-		}
+            pbRestart = new PictureBox
+            {
+                Location = new Point(385, 27),
+                Image = Resources.normal,
+                Name = "pbRestart",
+                Size = new Size(60, 60),
+                SizeMode = PictureBoxSizeMode.StretchImage,
+                TabIndex = 12,
+                TabStop = false
+            };
+            ((System.ComponentModel.ISupportInitialize)(pbRestart)).BeginInit();
+            ((System.ComponentModel.ISupportInitialize)(pbRestart)).EndInit();
+            pbRestart.Click += new EventHandler(Restart);
+            Controls.Add(pbRestart);
+            pbRestart.BringToFront();
+        }
 
-		private void ChangePic(object sender, MouseEventArgs e) {
-			if (WinState == Bool.Qubit) {
-				PictureBox Now = (PictureBox)sender;
-				switch (e.Button) {
-					case MouseButtons.Left:
-						if (!((Info)Now.Tag).Flagged) {
-							char N = map[((Info)Now.Tag).Location.X, ((Info)Now.Tag).Location.Y];
-							if (N != 'B') {
-								if (N != '0') {
-									Now.Image = Numbers[int.Parse(N.ToString())];
-									((Info)Now.Tag).Opened = true;
+        public enum Bool
+        {
+            True,
+            Qubit,
+            False
+        }
+
+
+        private void Main_Load(object sender, EventArgs e)
+        {
+            game = new Game(Modes.Easy
+                            , pnlContainer
+                            , ChangePic
+                            , Container_MouseUp
+                            , Container_MouseDown);
+            BombSoundEffect.Load();
+            WinSoundEffect.Load();
+            LosingImages = new Image[] { Resources.dead0, Resources.dead1, Resources.dead2, Resources.losing };
+
+            CenterControl(pnlContainer);
+            OutputLeftMines();
+        }
+
+        private void CenterControl(Control control)
+        {
+            int x = control.Parent.Width / 2 - control.Width / 2;
+            int y = control.Parent.Height / 2 - control.Height / 2;
+            control.Location = new Point(x, y);
+        }
+
+        bool firstClick = true;
+
+        private void ChangePic(object sender, MouseEventArgs e)
+        {
+            if (WinState == Bool.Qubit)
+            {
+                PictureBox clicked = (PictureBox)sender;
+                BlockInfo clickedInfo = game.GetInfo(clicked);
+                bool wasBomb = false;
+                if (firstClick)
+                    game.GenearateMap(clicked);
+                switch (e.Button)
+                {
+                    case MouseButtons.Left:
+                        if (clickedInfo.IsOpened)
+                            wasBomb = game.RevealSurroundBlocks(clickedInfo.Location.X, clickedInfo.Location.Y);
+                        else
+                            wasBomb = game.OpenBlock(clicked);
+                        break;
+
+                    case MouseButtons.Right:
+                        game.FlagBlock(clicked);
+                        break;
+
+                    case MouseButtons.Middle:
+                        wasBomb = game.RevealSurroundBlocks(clickedInfo.Location.X, clickedInfo.Location.Y);
+                        break;
+                }
+                if (wasBomb)
+                    Lost(clicked);
+                if (game.Rows * game.Cols - game.Mines == BlockInfo.BlocksOpened)
+                    Win();
+            }
+            OutputLeftMines();
+            firstClick = false;
+        }
+
+
+        private void OutputLeftMines()
+        {
+            lblLeftMines.Text = (game.Mines - game.Flags).ToString("D3");
+            CenterControl(lblLeftMines);
+        }
+
+        private void Win()
+        {
+            WinState = Bool.True;
+            pbRestart.Image = Resources.winning;
+            game.FlagAllBombs();
+            WinSoundEffect.Play();
+            MessageBox.Show("You have win");
+            //SpeechSynthesizer synthesizer = new SpeechSynthesizer
+            //{
+            //	Volume = 100,
+            //	Rate = -1
+            //};
+            //synthesizer.Speak("you're gonna lose next time Butthead");
+        }
+
+        private void Lost(PictureBox Mine)
+        {
+            Mine.BackColor = Color.Red;
+            Random random = new Random();
+            pbRestart.Image = LosingImages[random.Next(0, LosingImages.Length)];
+            BombSoundEffect.Play();
+            WinState = Bool.False;
+            game.RevealAllBombs();
+            MessageBox.Show("You have Lost");
+            //SpeechSynthesizer synthesizer = new SpeechSynthesizer
+            //{
+            //	Volume = 100, 
+            //	Rate = -1 
+            //};
+            //synthesizer.Speak("Fuck You loser");
+        }
+
+        private void Restart(object sender, EventArgs e)
+        {
+            pbRestart.Image = Resources.normal;
+            game.Resize(mode);
+            PerformLayout();
+            WinState = Bool.Qubit;
+            OutputLeftMines();
+            firstClick = true;
+            //MessageBox.Show("Mines is More than blocks or very close to it! ");
+        }
+
+        //private Size btnSizeDiff;
+
+        private void Main_ResizeBegin(object sender, EventArgs e)
+        {
+            //btnSizeDiff = Size - (Size)btnRestart.Location;
+        }
+
+        private void Main_Resize(object sender, EventArgs e)
+        {
+            Size center = new Size(Size.Width / 2, Size.Height / 2);
+            //btnRestart.Location = new Point(Size - btnSizeDiff);
+            pnlBoard.Location = new Point(
+                center.Width - pnlBoard.Width / 2, center.Height - pnlBoard.Height / 2
+                );
+            game.MaintainBlocksLocations();
+
+        }
+
+        bool isDown = false;
+
+        private void pnlBoard_MouseDown(object sender, MouseEventArgs e)
+        {
+            isDown = true;
+        }
+
+        private void pnlBoard_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (isDown)
+            {
+                using (Control c = new Control { Parent = pnlBoard, Location = pnlBoard.PointToClient(new Point(e.X, e.Y)) })
+                    pnlBoard.ScrollControlIntoView(c);
+            }
+        }
+
+        private void pnlBoard_MouseUp(object sender, MouseEventArgs e)
+        {
+            isDown = false;
+        }
+
+        bool isSurprised = false;
+        Image[] images = new Image[9];
+
+        private void Container_MouseDown(object sender, MouseEventArgs e)
+        {
+            if (!isSurprised && WinState == Bool.Qubit)
+            {
+                if (e.Button == MouseButtons.Left)
+                {
+                    pbRestart.Image = Resources.opening;
+                    BlockInfo blockInfo = game.GetInfo((PictureBox)sender);
+                    /*
+					int x = blockInfo.Location.Y;
+					int y = blockInfo.Location.X;
+					for (int i = y - 1; i <= y + 1; i++)
+						if (i >= 0 && i < game.Rows)
+							for (int j = x - 1; j <= x + 1; j++)
+								if (j >= 0 && j < game.Cols)
+								{
+									images[i * 3 + j] = game.Blocks[i][j].Image;
+									game.Blocks[i][j].Image = Resources._0;
 								}
-								else
-									RevealConnectedBlocks(((Info)Now.Tag).Location.X, ((Info)Now.Tag).Location.Y);
-							}
-							else
-								HasLost(Now);
-						}
-						break;
-					case MouseButtons.Right:
-						if (!((Info)Now.Tag).Opened) {
-							Now.Image = !((Info)Now.Tag).Flagged ? Resources.Flag : Resources.Unopened;
-							((Info)Now.Tag).Flagged = !((Info)Now.Tag).Flagged;
-							Flags += ((Info)Now.Tag).Flagged ? 1 : -1;
-						}
-						break;
-					case MouseButtons.Middle:
-						RevealSrndBlocks(((Info)Now.Tag).Location.X, ((Info)Now.Tag).Location.Y);
-						break;
-				}
-				if (M * N - MinMines == Info.NOpened)
-					HasWin();
-			}
-			MineN.Text = (MinMines - Flags >= 0 ? MinMines - Flags : 0) + "";
-		}
+					*/
+                }
+            }
+            isSurprised = true;
+        }
 
+        private void Container_MouseUp(object sender, MouseEventArgs e)
+        {
+            if (WinState == Bool.Qubit)
+            {
 
+                if (e.Button == MouseButtons.Left)
+                {
+                    /*
+					BlockInfo blockInfo = game.GetInfo((PictureBox)sender);
+					int x = blockInfo.Location.Y;
+					int y = blockInfo.Location.X;
+					for (int i = y - 1; i <= y + 1; i++)
+						if (i >= 0 && i < game.Rows)
+							for (int j = x - 1; j <= x + 1; j++)
+								if (j >= 0 && j < game.Cols)
+								{
+									game.Blocks[i][j].Image = images[i * 3 + j];
+								}
+					*/
+                    pbRestart.Image = Resources.normal;
+                    isSurprised = false;
+                }
+            }
+        }
 
-		private void HasLost(PictureBox Mine) {
-			Mine.Image = Resources.Bomb;
-			SoundEffects[0].Play();
-			WinState = Bool.False;
-			MessageBox.Show("You have Lost");
-		}
+        private void ZoomInOut(object sender, MouseEventArgs e)
+        {
+            SuspendLayout();
+            ResumeLayout(false);
+            game.ResizeBlocks((e.Delta > 0 ? 1 : -1) * 4);
+        }
 
-		private void RCBHelper(int R, int C) {
-			if (R < M && R >= 0 && C < N && C >= 0)
-				RevealConnectedBlocks(R, C);
-		}
+        private void SelectNoMode()
+        {
+            tstrpOptModeEasy.Checked = false;
+            tstrpOptModeIntermediate.Checked = false;
+            tstrpOptModeHard.Checked = false;
+            tstrpOptModeCustom.Checked = false;
+        }
 
-		private void RevealConnectedBlocks(int R, int C) {
-			if (map[R, C] != '0' && char.IsLetterOrDigit(map[R, C])) {
-				if (char.IsDigit(map[R, C])) {
-					S[R][C].Image = Numbers[int.Parse(map[R, C].ToString())];
-					GetInfo(S[R][C]).Opened = true;
-				}
-				return;
-			}
-			else {
-				if (!GetInfo(S[R][C]).Opened) {
-					S[R][C].Image = Resources._0;
-					GetInfo(S[R][C]).Opened = true;
-					RCBHelper(R - 1, C); //Upper Block
-					RCBHelper(R, C - 1); //Left Block
-					RCBHelper(R, C + 1); //Right Block 
-					RCBHelper(R + 1, C); //Lower Block
-					RCBHelper(R - 1, C - 1); //Upper Left Block
-					RCBHelper(R - 1, C + 1); //Upper Right Block
-					RCBHelper(R + 1, C - 1); //Lower Left Block
-					RCBHelper(R + 1, C + 1); //Lower Right Block
-				}
-				return;
-			}
-		}
+        private void OptModeIntermediate_Click(object sender, EventArgs e)
+        {
+            SelectNoMode();
+            tstrpOptModeIntermediate.Checked = true;
+            mode = Modes.Intermediate;
+        }
 
-		private void InitGame() {
-			Flags = 0;
-			MineN.Text = (MinMines - Flags >= 0 ? MinMines - Flags : 0) + "";
-			WinState = Bool.Qubit;
-			Info.NOpened = 0;
-			map = new char[M, N];
-			for (int i = 0; i < S.Count; i++)
-				for (int j = 0; j < S[i].Count; j++) {
-					S[i][j].Image = Resources.Unopened;
-					map[i, j] = '0';
-					GetInfo(S[i][j]).Opened = false;
-					GetInfo(S[i][j]).Flagged = false;
-				}
-			Shuffle();
-			Analyzing();
-		}
+        private void OptModeHard_Click(object sender, EventArgs e)
+        {
+            SelectNoMode();
+            tstrpOptModeHard.Checked = true;
+            mode = Modes.Expert;
+        }
 
-		private void RemoveRow(int R) {
-			foreach (var item in S[R])
-				Controls.Remove(item);
-		}
+        private void OptModeEasy_Click(object sender, EventArgs e)
+        {
+            SelectNoMode();
+            tstrpOptModeEasy.Checked = true;
+            mode = Modes.Easy;
+        }
 
-		private void RemoveExceeds() {
-			for (int i = S.Count - 1; i >= NR.Value; i--) {
-				RemoveRow(i);
-				S.RemoveAt(i);
-			}
-			for (int i = 0; i < S.Count; i++)
-				for (int j = S[i].Count - 1; j >= NC.Value; j--) {
-					Controls.Remove(S[i][j]);
-					S[i].RemoveAt(j);
-				}
-		}
+        private void OptSettings_Click(object sender, EventArgs e)
+        {
 
-		private void Restart_Click(object sender, EventArgs e) {
-			if (NR.Value * NC.Value - 2 > NM.Value) {
-				if (NR.Value * NC.Value < M * N)
-					RemoveExceeds();
-				M = (int)NR.Value;
-				N = (int)NC.Value;
-				MinMines = (int)NM.Value;
-				InitBoard();
-				InitGame();
-			}
-			else
-				MessageBox.Show("Number of Mines is More than Number of blocks or Really Near of it! ");
-		}
+        }
 
-		private void InitBoard() {
-			for (int i = S.Count; i < M; i++)
-				S.Add(new List<PictureBox>());
-			for (int i = 0; i < M; i++) {
-				for (int j = S[i].Count; j < N; j++) {
-					S[i].Add(new PictureBox {
-						Name = "S" + i + j,
-						Tag = new Info(new Point(i, j), false),
-						Size = new Size(DS, DS),
-						TabIndex = i * M + j,
-						SizeMode = PictureBoxSizeMode.StretchImage,
-						TabStop = false
-					});
-					S[i][j].MouseClick += new MouseEventHandler(ChangePic);
-					Controls.Add(S[i][j]);
-				}
-			}
-			InitLocations();
-		}
-
-		private Info GetInfo(object sender) {
-			return (Info)((PictureBox)sender).Tag;
-		}
-
-		private void InitLocations() {
-			Point AlignCenter = CalcCenter();
-			for (int i = 0; i < M; i++)
-				for (int j = 0; j < N; j++)
-					S[i][j].Location = new Point(AlignCenter.X + (j * (DS + Sp)), AlignCenter.Y + (i * (DS + Sp)));
-		}
-
-		private void HasWin() {
-			WinState = Bool.True;
-			SoundEffects[1].Play();
-			MessageBox.Show("You have win");
-		}
-	}
+        private void OptModeCustom_Click(object sender, EventArgs e)
+        {
+            Difficulty difficulty = new Difficulty(mode);
+            difficulty.ShowDialog();
+            mode = difficulty.CustomMode;
+            SelectNoMode();
+            tstrpOptModeCustom.Checked = true;
+        }
+    }
 }
